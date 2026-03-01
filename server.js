@@ -8,7 +8,9 @@ require("dotenv").config();
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
-
+app.get("/health", (req, res) => {
+  res.json({ ok: true, message: "Backend is running ✅" });
+});
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // PDF upload in memory
