@@ -151,9 +151,7 @@
     <div id="chat-input-container">
       <button id="pdf-btn" class="small-btn" title="Upload PDF to summarize">📄</button>
       <input type="file" id="pdf-input" accept="application/pdf" style="display:none" />
-
       <input type="text" id="user-input" placeholder="Type your message..." autocomplete="off" />
-
       <button id="send-btn" class="bg-indigo-600 text-white p-2 rounded-full hover:bg-indigo-700 disabled:opacity-50 transition-all" title="Send">➤</button>
     </div>
 
@@ -183,6 +181,7 @@
   </div>
 
   <script>
+    // ✅ CHANGE THIS TO YOUR RENDER WEB SERVICE URL
     const BACKEND_BASE = "https://eat-chatbot.onrender.com";
 
     const toggle = document.getElementById('chatbot-toggle');
@@ -308,8 +307,31 @@
       ];
     }
 
+    // ✅ Safe JSON fetch helper (prevents JSON parse crashes)
+    async function fetchJson(url, options) {
+      const resp = await fetch(url, options);
+      const raw = await resp.text();
+
+      if (!raw) {
+        throw new Error(`Empty response (status ${resp.status}). Backend might be down or crashed.`);
+      }
+
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(`Non-JSON response (status ${resp.status}): ${raw.slice(0, 200)}`);
+      }
+
+      if (!resp.ok) {
+        throw new Error(data?.error || `API Error (status ${resp.status})`);
+      }
+
+      return data;
+    }
+
     async function fetchAIResponse(prompt) {
-      const response = await fetch(`${BACKEND_BASE}/api/chat`, {
+      const data = await fetchJson(`${BACKEND_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -319,19 +341,10 @@
         }),
       });
 
-      const data = await response.json();
+      chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+      chatHistory.push({ role: "model", parts: [{ text: data.reply }] });
 
-      if (response.ok) {
-        chatHistory.push({ role: "user", parts: [{ text: prompt }] });
-        chatHistory.push({ role: "model", parts: [{ text: data.reply }] });
-        return data.reply;
-      }
-
-      throw new Error(
-        (typeof data?.error === "string" && data.error) ||
-        data?.error?.message ||
-        JSON.stringify(data)
-      );
+      return data.reply;
     }
 
     pdfBtn.onclick = () => pdfInput.click();
@@ -347,25 +360,25 @@
         const form = new FormData();
         form.append("pdf", file);
 
-        const resp = await fetch(`${BACKEND_BASE}/api/summarize-pdf`, {
+        const data = await fetchJson(`${BACKEND_BASE}/api/summarize-pdf`, {
           method: "POST",
           body: form
         });
-
-        const data = await resp.json();
-
-        if (!resp.ok) throw new Error(data?.error || JSON.stringify(data));
 
         loading.remove();
 
         const aiDiv = addEmptyAIBubble();
         await typewriter(aiDiv, data.summary, 3);
 
+        if (data.used_ocr) {
+          addBubble("OCR mode was used ✅ (scanned/image PDF detected)", "ai");
+        }
+
         addSuggestions([
-          "Improve this resume",
-          "Make ATS-friendly version",
-          "Write a strong summary for me",
-          "Rewrite my projects with metrics",
+          "Summarize in 10 lines",
+          "Make short notes",
+          "Create 10 MCQs from this",
+          "Give important questions",
           "Do you want any changes?"
         ]);
 
