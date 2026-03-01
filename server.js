@@ -4,6 +4,7 @@ const multer = require("multer");
 const pdfParse = require("pdf-parse"); // ✅ pdf-parse@1.1.1
 require("dotenv").config();
 
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -181,7 +182,8 @@ app.post("/api/summarize-pdf", upload.single("pdf"), async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-
-app.listen(8001, () => {
-  console.log("✅ Server running on http://localhost:8001");
+const PORT = process.env.PORT || 8001;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Running on port", PORT);
 });
+
