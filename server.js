@@ -5,38 +5,35 @@ const cors = require("cors");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
 
-// OCR stack (for scanned/image PDFs)
-const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js"); // ✅ use pdfjs-dist@2.16.x
 const { createCanvas } = require("canvas");
 const Tesseract = require("tesseract.js");
 
 const app = express();
 
-// ✅ CORS (allow frontend anywhere for now)
 app.use(cors());
-
 app.use(express.json({ limit: "2mb" }));
 
-// ✅ Health route
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "Backend is running ✅" });
 });
 
+process.on("unhandledRejection", (err) => console.error("UNHANDLED:", err));
+process.on("uncaughtException", (err) => console.error("UNCAUGHT:", err));
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// PDF upload in memory
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
-// ---- Gemini helper ----
 async function geminiGenerate({ modelName, contents, generationConfig }) {
   if (!GEMINI_API_KEY) {
     return {
       ok: false,
       status: 500,
-      data: { error: { message: "Missing GEMINI_API_KEY in Render environment variables" } },
+      data: { error: { message: "Missing GEMINI_API_KEY in Render env vars" } },
     };
   }
 
@@ -52,7 +49,6 @@ async function geminiGenerate({ modelName, contents, generationConfig }) {
   return { ok: resp.ok, status: resp.status, data };
 }
 
-// ---- Mode prompts ----
 function buildSystemPrompt(mode) {
   const base =
     "You are Edualttech AI. Motto: 'Learn Beyond Books'. " +
@@ -60,19 +56,12 @@ function buildSystemPrompt(mode) {
     "4) Use emojis. 5) Focus on alternative learning and tech. " +
     "6) End with: Do you want any changes? 👇";
 
-  if (mode === "study") {
-    return base + " Mode: Study Plan. Make a clear plan with daily tasks, time estimates, resources, and checklist.";
-  }
-  if (mode === "resume") {
-    return base + " Mode: Resume Helper. Improve ATS bullets using action verbs + metrics, rewrite summary, suggest skills, and ask 1 follow-up question.";
-  }
-  if (mode === "projects") {
-    return base + " Mode: Project Ideas. Give 6-8 ideas: Easy/Medium/Hard, include stack, features, and what student learns.";
-  }
+  if (mode === "study") return base + " Mode: Study Plan. Make a clear plan with daily tasks, time estimates, resources, and checklist.";
+  if (mode === "resume") return base + " Mode: Resume Helper. Improve ATS bullets using action verbs + metrics, rewrite summary, suggest skills, and ask 1 follow-up question.";
+  if (mode === "projects") return base + " Mode: Project Ideas. Give 6-8 ideas: Easy/Medium/Hard, include stack, features, and what student learns.";
   return base + " Mode: General assistant.";
 }
 
-// ✅ OCR function: render PDF pages -> OCR -> text
 async function ocrPdfToText(buffer, maxPages = 5) {
   const loadingTask = pdfjsLib.getDocument({ data: buffer });
   const pdf = await loadingTask.promise;
@@ -82,28 +71,21 @@ async function ocrPdfToText(buffer, maxPages = 5) {
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-
-    // Render bigger for OCR accuracy
     const viewport = page.getViewport({ scale: 2.0 });
 
     const canvas = createCanvas(viewport.width, viewport.height);
     const ctx = canvas.getContext("2d");
 
     await page.render({ canvasContext: ctx, viewport }).promise;
-
     const imgBuffer = canvas.toBuffer("image/png");
 
-    const result = await Tesseract.recognize(imgBuffer, "eng", {
-      logger: () => {}, // quiet logs
-    });
-
+    const result = await Tesseract.recognize(imgBuffer, "eng", { logger: () => {} });
     allText += `\n\n--- Page ${pageNum} ---\n${result?.data?.text || ""}`;
   }
 
   return allText.trim();
 }
 
-// ============ CHAT ============
 app.post("/api/chat", async (req, res) => {
   try {
     const { message, history = [], mode = "general" } = req.body;
@@ -113,18 +95,11 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const safeHistory = Array.isArray(history)
-      ? history.filter(
-          (h) =>
-            h &&
-            (h.role === "user" || h.role === "model") &&
-            Array.isArray(h.parts)
-        )
+      ? history.filter(h => h && (h.role === "user" || h.role === "model") && Array.isArray(h.parts))
       : [];
 
-    const systemPrompt = buildSystemPrompt(mode);
-
     const contents = [
-      { role: "user", parts: [{ text: systemPrompt }] },
+      { role: "user", parts: [{ text: buildSystemPrompt(mode) }] },
       ...safeHistory,
       { role: "user", parts: [{ text: message }] },
     ];
@@ -134,11 +109,7 @@ app.post("/api/chat", async (req, res) => {
     const result = await geminiGenerate({
       modelName,
       contents,
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.9,
-        maxOutputTokens: 2000,
-      },
+      generationConfig: { temperature: 0.7, topP: 0.9, maxOutputTokens: 2000 },
     });
 
     if (!result.ok) {
@@ -148,10 +119,7 @@ app.post("/api/chat", async (req, res) => {
       });
     }
 
-    const reply =
-      result.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "No response generated.";
-
+    const reply = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
     return res.json({ reply, model_used: modelName });
   } catch (err) {
     console.error("❌ /api/chat error:", err);
@@ -159,27 +127,18 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// ============ PDF SUMMARIZE (TEXT + OCR FALLBACK) ============
 app.post("/api/summarize-pdf", upload.single("pdf"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No PDF uploaded (field name must be 'pdf')" });
-    }
+    if (!req.file) return res.status(400).json({ error: "No PDF uploaded (field name must be 'pdf')" });
+    if (req.file.mimetype !== "application/pdf") return res.status(400).json({ error: "Only PDF files are allowed" });
 
-    if (req.file.mimetype !== "application/pdf") {
-      return res.status(400).json({ error: "Only PDF files are allowed" });
-    }
-
-    // 1) Try normal text extraction first
     const parsed = await pdfParse(req.file.buffer);
     let text = (parsed.text || "").trim();
     let used_ocr = false;
 
-    // 2) If low/no text -> OCR fallback
     if (!text || text.length < 80) {
       used_ocr = true;
-      console.log("📄 Scanned/image PDF detected -> using OCR fallback...");
-      text = await ocrPdfToText(req.file.buffer, 5); // OCR first 5 pages
+      text = await ocrPdfToText(req.file.buffer, 5);
     }
 
     if (!text || text.length < 30) {
@@ -188,9 +147,7 @@ app.post("/api/summarize-pdf", upload.single("pdf"), async (req, res) => {
       });
     }
 
-    // Clip long text
-    const maxChars = 35000;
-    const clipped = text.length > maxChars ? text.slice(0, maxChars) : text;
+    const clipped = text.length > 35000 ? text.slice(0, 35000) : text;
 
     const prompt =
       "Summarize this PDF text for a student. Output format:\n" +
@@ -199,18 +156,14 @@ app.post("/api/summarize-pdf", upload.single("pdf"), async (req, res) => {
       "-> Suggestions / improvements\n" +
       "-> Ask 3 follow-up questions\n" +
       "End with: Do you want any changes? 👇\n\n" +
-      "PDF TEXT:\n" +
-      clipped;
+      "PDF TEXT:\n" + clipped;
 
     const modelName = "models/gemini-2.5-flash";
 
     const result = await geminiGenerate({
       modelName,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 2000,
-      },
+      generationConfig: { temperature: 0.4, maxOutputTokens: 2000 },
     });
 
     if (!result.ok) {
@@ -220,10 +173,7 @@ app.post("/api/summarize-pdf", upload.single("pdf"), async (req, res) => {
       });
     }
 
-    const summary =
-      result.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "No summary generated.";
-
+    const summary = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "No summary generated.";
     return res.json({ summary, used_ocr });
   } catch (err) {
     console.error("❌ /api/summarize-pdf error:", err);
@@ -231,8 +181,5 @@ app.post("/api/summarize-pdf", upload.single("pdf"), async (req, res) => {
   }
 });
 
-// ✅ Render PORT
 const PORT = process.env.PORT || 8001;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("✅ Server running on port", PORT);
-});
+app.listen(PORT, "0.0.0.0", () => console.log("✅ Server running on port", PORT));
