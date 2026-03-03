@@ -11,14 +11,11 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "canvas": "^3.2.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "multer": "^2.1.0",
     "pdf-parse": "^1.1.4",
-    "pdf-parser": "^1.0.5",
-    "pdfjs-dist": "^2.16.105",
-    "tesseract.js": "^7.0.0"
+    "pdf-parser": "^1.0.5"
   }
 }
